@@ -1,0 +1,177 @@
+// client.js — shared across guest.html and admin.html
+// encryption scheme:
+// - derive key from guestCode using PBKDF2 with per-file salt (16 bytes) and 200k iterations
+// - encrypt with AES-GCM with random 12-byte iv
+// - stored blob format: [salt (16)][iv (12)][ciphertext...]
+
+const params = new URLSearchParams(location.search);
+const EVENT_ID = params.get("event");
+const ENTERED_CODE = params.get("code"); // code from landing — contains either guestCode or adminCode
+const fileInput = document.getElementById("fileInput");
+const nameInput = document.getElementById("nameInput");
+const previewBtn = document.getElementById("previewBtn");
+const refreshBtn = document.getElementById("refreshBtn");
+const confirmCard = document.getElementById("confirmCard");
+const previewArea = document.getElementById("previewArea");
+const cancelUpload = document.getElementById("cancelUpload");
+const doUpload = document.getElementById("doUpload");
+const gallery = document.getElementById("gallery");
+
+let selectedFiles = [];
+
+// helper: derive key from passphrase (guestCode)
+async function deriveKey(passphrase, salt) {
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', enc.encode(passphrase), {name:'PBKDF2'}, false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 200000, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt','decrypt']
+  );
+}
+
+async function encryptFile(file, passphrase) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(passphrase, salt);
+  const data = await file.arrayBuffer();
+  const ct = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, key, data);
+
+  // concat salt + iv + ciphertext
+  const payload = new Uint8Array(16 + 12 + ct.byteLength);
+  payload.set(salt, 0);
+  payload.set(iv, 16);
+  payload.set(new Uint8Array(ct), 28);
+  return payload.buffer;
+}
+
+async function decryptBlobBuffer(buffer, passphrase) {
+  const arr = new Uint8Array(buffer);
+  const salt = arr.slice(0,16);
+  const iv = arr.slice(16,28);
+  const ct = arr.slice(28);
+  const key = await deriveKey(passphrase, salt);
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  return new Blob([plain]);
+}
+
+// preview selected
+if (previewBtn) previewBtn.onclick = () => {
+  selectedFiles = Array.from(fileInput.files || []);
+  if(!selectedFiles.length) return alert("pick files first");
+  previewArea.innerHTML = "";
+  selectedFiles.forEach(f => {
+    const d = document.createElement("div");
+    d.className = "thumb";
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(f);
+    d.appendChild(img);
+    const m = document.createElement("div"); m.className="meta"; m.innerText = f.name;
+    d.appendChild(m);
+    previewArea.appendChild(d);
+  });
+  confirmCard.style.display = "block";
+};
+
+// cancel upload preview
+if (cancelUpload) cancelUpload.onclick = () => {
+  confirmCard.style.display = "none";
+  previewArea.innerHTML = "";
+  selectedFiles = [];
+};
+
+// do upload (encrypt then upload)
+if (doUpload) doUpload.onclick = async () => {
+  const passphrase = prompt("Enter the event code (guest code) to encrypt (the code on the invite):", ENTERED_CODE || "");
+  if(!passphrase) return alert("encryption code required");
+  const uploader = (nameInput && nameInput.value) ? nameInput.value : "Anonymous";
+  for (const f of selectedFiles) {
+    const encrypted = await encryptFile(f, passphrase);
+    const blob = new Blob([encrypted], { type: "application/octet-stream" });
+    const fd = new FormData();
+    fd.append("image", blob, f.name + ".enc");
+    fd.append("uploader", uploader);
+    await fetch(`/event/${EVENT_ID}/upload`, { method:"POST", body: fd });
+  }
+  alert("Uploaded!");
+  confirmCard.style.display = "none";
+  selectedFiles = [];
+  previewArea.innerHTML = "";
+  loadGallery();
+};
+
+// refresh gallery
+if (refreshBtn) refreshBtn.onclick = () => loadGallery();
+if (window.onload && gallery) loadGallery();
+
+// load gallery: get metadata list, then fetch each encrypted file, decrypt with guestCode prompt and show thumbnails
+async function loadGallery(){
+  if(!gallery) return;
+  gallery.innerHTML = "<div class='small'>Loading...</div>";
+  const res = await fetch(`/event/${EVENT_ID}/images`);
+  if (!res.ok){ gallery.innerHTML = "<div class='small'>Event not found</div>"; return; }
+  const list = await res.json();
+  gallery.innerHTML = "";
+  if (!list.length){ gallery.innerHTML = "<div class='small'>No photos yet.</div>"; return; }
+
+  // ask user for event code to view decrypted images (guests should enter the guest code)
+  const viewCode = prompt("Enter event code to view photos:", ENTERED_CODE || "");
+  if(!viewCode) { gallery.innerHTML = "<div class='small'>Code required to view photos.</div>"; return; }
+
+  for (const item of list.slice().reverse()) {
+    const box = document.createElement("div");
+    box.className = "thumb";
+    const imgEl = document.createElement("img");
+    const metaDiv = document.createElement("div");
+    metaDiv.className = "meta";
+    metaDiv.innerText = item.originalName || item.filename;
+
+    // fetch encrypted file
+    try {
+      const resp = await fetch(`/event/${EVENT_ID}/file/${item.filename}`);
+      if(!resp.ok) throw new Error("file missing");
+      const arrbuf = await resp.arrayBuffer();
+      const blob = await decryptBlobBuffer(arrbuf, viewCode);
+      const url = URL.createObjectURL(blob);
+      imgEl.src = url;
+      box.appendChild(imgEl);
+
+      // footer: uploader name + optional actions (download, delete for admin)
+      const footer = document.createElement("div");
+      footer.className = "footer-name";
+      footer.innerText = `${item.uploader || "Anonymous"} • ${new Date(item.ts).toLocaleString()}`;
+      box.appendChild(footer);
+
+      // actions: download & admin delete when applicable
+      const actionRow = document.createElement("div"); actionRow.className="actionRow";
+      const dl = document.createElement("button"); dl.className="iconBtn"; dl.innerText="Download";
+      dl.onclick = () => {
+        const a = document.createElement("a"); a.href = url; a.download = item.originalName || item.filename; a.click();
+      };
+      actionRow.appendChild(dl);
+
+      // if admin code present in URL params, show delete control that posts adminCode
+      const adminCode = new URLSearchParams(location.search).get("code");
+      if (adminCode) {
+        const del = document.createElement("button"); del.className="iconBtn"; del.innerText="Delete";
+        del.onclick = async () => {
+          if(!confirm("Delete this file?")) return;
+          await fetch(`/event/${EVENT_ID}/delete`, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ filename: item.filename, adminCode }) });
+          loadGallery();
+        };
+        actionRow.appendChild(del);
+      }
+
+      box.appendChild(actionRow);
+      gallery.appendChild(box);
+
+    } catch (err) {
+      // can't decrypt / fetch: show placeholder
+      const placeholder = document.createElement("div"); placeholder.className="thumb";
+      placeholder.innerHTML = `<div class="meta">Can't load ${item.originalName || item.filename}</div>`;
+      gallery.appendChild(placeholder);
+    }
+  }
+}

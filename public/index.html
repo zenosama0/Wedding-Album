@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Event — enter code</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="header">Event Access</div>
+  <div class="container">
+    <div class="card">
+      <h3>Enter your event code</h3>
+      <div class="small">Enter the 6-digit guest code printed on the invite, or the admin code.</div>
+      <input id="code" class="input" placeholder="Enter code">
+      <button id="enter" class="input">Enter</button>
+      <p id="msg" class="small" style="color:red"></p>
+    </div>
+    <div class="card">
+      <h4>Owner? Manage events</h4>
+      <a href="/owner.html"><button class="input">Open Host Portal</button></a>
+    </div>
+  </div>
+  <script>
+    // note: this page is served at /event/:eventId
+    document.getElementById("enter").onclick = async () => {
+      const code = document.getElementById("code").value.trim();
+      const pathParts = location.pathname.split("/");
+      const eventId = pathParts[2];
+      if(!code){ document.getElementById("msg").innerText="enter a code"; return; }
+      const res = await fetch(`/event/${eventId}/verify`, {
+        method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ code })
+      });
+      if (res.ok){
+        const data = await res.json();
+        if (data.role === "guest") location.href = `/guest.html?event=${eventId}&code=${encodeURIComponent(code)}`;
+        else location.href = `/admin.html?event=${eventId}&code=${encodeURIComponent(code)}`;
+      } else {
+        const e = await res.json().catch(()=>({error:"Invalid code"}));
+        document.getElementById("msg").innerText = e.error || "Invalid code";
+      }
+    };
+  </script>
+</body>
+</html>

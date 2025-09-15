@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Admin Album</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="header">Event Album — Admin</div>
+  <div class="container">
+    <div class="card">
+      <input id="fileInput" type="file" accept="image/*" multiple>
+      <input id="nameInput" placeholder="Uploader name (optional)" class="input">
+      <div class="small">Admins can upload and delete images. Deletion requires admin code (kept private).</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="previewBtn" style="flex:1">Preview</button>
+        <button id="refreshBtn" style="flex:1">Refresh Gallery</button>
+      </div>
+    </div>
+
+    <div id="confirmCard" class="card" style="display:none">
+      <h4>Confirm Upload</h4>
+      <div id="previewArea" class="gallery"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="cancelUpload" class="col">Cancel</button>
+        <button id="doUpload" class="col">Confirm & Upload</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>Photos</h4>
+      <div id="gallery" class="gallery"></div>
+    </div>
+  </div>
+
+  <script src="/client.js"></script>
+</body>
+</html>

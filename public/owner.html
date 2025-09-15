@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Host Portal</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="header">Host Portal</div>
+  <div class="container">
+    <div class="card">
+      <h4>Create New Event</h4>
+      <input id="alias" class="input" placeholder="Event alias (e.g., 'John & Mary's Wedding')">
+      <input id="ownerToken" class="input" placeholder="Owner token (required)"/>
+      <button id="createBtn">Create Event</button>
+      <div id="createResult" class="small"></div>
+    </div>
+
+    <div class="card">
+      <h4>Existing Events</h4>
+      <input id="ownerToken2" class="input" placeholder="Owner token to list events"/>
+      <button id="refreshList">Refresh List</button>
+      <div id="eventsList"></div>
+    </div>
+  </div>
+
+  <script>
+    const base = window.location.origin;
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text)
+        .then(() => alert("Copied: " + text))
+        .catch(err => alert("Copy failed: " + err));
+    }
+
+    document.getElementById("createBtn").onclick = async () => {
+      const alias = document.getElementById("alias").value.trim();
+      const token = document.getElementById("ownerToken").value.trim();
+      if(!token) return alert("enter owner token");
+      const res = await fetch("/owner/create", {
+        method:"POST",
+        headers: { "Content-Type":"application/json", "x-owner-token": token },
+        body: JSON.stringify({ alias })
+      });
+      const j = await res.json();
+      if(res.ok){
+        const guestLink = `${base}/guest.html?eventID=${j.eventId}`;
+        const adminLink = `${base}/admin.html?eventID=${j.eventId}`;
+        document.getElementById("createResult").innerHTML = `
+          Created: <b>${j.eventId}</b><br>
+          Guest code: <b>${j.guestCode}</b> 
+          <button onclick="copyText('${guestLink}')">Copy Guest Link</button><br>
+          Admin code: <b>${j.adminCode}</b> 
+          <button onclick="copyText('${adminLink}')">Copy Admin Link</button>
+        `;
+      } else {
+        document.getElementById("createResult").innerText = j.error || "error";
+      }
+    };
+
+    document.getElementById("refreshList").onclick = async () => {
+      const token = document.getElementById("ownerToken2").value.trim();
+      if(!token) return alert("owner token required");
+      const res = await fetch("/owner/list", { headers: { "x-owner-token": token }});
+      const j = await res.json();
+      if(!res.ok) return alert(j.error || "error");
+      const list = document.getElementById("eventsList");
+      list.innerHTML = "";
+      j.forEach(e=> {
+        const guestLink = `${base}/guest.html?eventID=${e.eventId}`;
+        const adminLink = `${base}/admin.html?eventID=${e.eventId}`;
+        const d = document.createElement("div");
+        d.innerHTML = `
+          <div style="padding:8px;border-bottom:1px solid #eee">
+            <b>${e.alias}</b>
+            <div class="small">${e.eventId} — ${e.createdAt}</div>
+            <button onclick="copyText('${guestLink}')">Copy Guest Link</button>
+            <button onclick="copyText('${adminLink}')">Copy Admin Link</button>
+          </div>`;
+        list.appendChild(d);
+      });
+    };
+  </script>
+</body>
+</html>
